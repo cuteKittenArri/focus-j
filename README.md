@@ -9,9 +9,10 @@ später einlösen.
 
 - Python 3.8+
 - `curses` (ist bei Linux/macOS Standard in Python enthalten, keine Installation nötig)
-- Ein Terminal mit 256-Farben-Unterstützung für die vollen Pastell-/Magenta-Töne
-  (praktisch jedes moderne Terminal, z.B. Standard-zsh-Terminal, iTerm, Alacritty, Kitty ...).
-  Ohne 256 Farben fällt die App automatisch auf Standardfarben zurück.
+- Ein Terminal mit 256-Farben-Unterstützung (praktisch jedes moderne Terminal,
+  z.B. Standard-zsh-Terminal, iTerm, Alacritty, Kitty ...). Kann das Terminal Farben
+  umdefinieren (z.B. Kitty, xterm), erscheint die Palette exakt, sonst als nächstliegende
+  256er-Farben. Ohne 256 Farben fällt die App automatisch auf Standardfarben zurück.
 
 Keine externen pip-Pakete nötig - reine Python-Standardbibliothek.
 
@@ -61,6 +62,7 @@ joint-focus
 
 - Die Glut wandert von links (frisch) nach rechts (Filter) - je mehr Zeit vergeht,
   desto mehr ist verbrannt.
+- Während einer Pause glimmt die Glut nur noch dunkel und der Rauch hört auf.
 - Asche und Rauch sind rein optisch, haben aber keinen Einfluss auf die Zeitmessung.
 - Bei Erreichen des Filters ist die Session komplett durchgelaufen → **+1 Joint**.
 
@@ -84,8 +86,9 @@ joint-focus/
 ├── README.md
 └── joint_focus/
     ├── __init__.py
-    ├── colors.py             # Magenta/Rosa/Pastell-Farbpaletten (curses)
-    ├── ascii_joint.py         # Reine Rendering-Logik für die Joint-Animation
+    ├── colors.py             # Farbrollen: Night / Violet / Plum / Cream (curses)
+    ├── ascii_joint.py        # Reine Rendering-Logik für Joint + Rauch
+    ├── bigtext.py            # Große Block-Ziffern für den Timer
     ├── storage.py            # Persistenz (JSON-Datei) für den Joint-Counter
     └── ui.py                 # Curses-Vollbild-UI: Menü, Timer, Einlösen
 ```
@@ -94,7 +97,10 @@ joint-focus/
 
 - **Neue Zeitlängen**: `DURATIONS`-Dict in `joint_focus/ui.py` erweitern
   (Format: `"key": (sekunden, "Anzeigename")`).
-- **Farben ändern**: `joint_focus/colors.py` - dort sind alle 256er-Farbcodes
-  (und Fallback-Farben) an einer Stelle gesammelt.
-- **Joint-Länge/-Aussehen**: `joint_focus/ascii_joint.py` (`INNER_LEN`, Zeichen
-  für Papier/Asche/Glut/Filter).
+- **Farben ändern**: `joint_focus/colors.py` - die Palette besteht aus vier Hex-Farben
+  ([colorhunt](https://colorhunt.co/palette/2900445000718a2a78eee3b0)), alle anderen Töne
+  werden daraus gemischt. Vier Konstanten tauschen = neue Palette. Die benannten Rollen
+  (und Fallback-Farben für 8-Farben-Terminals) liegen ebenfalls dort.
+- **Joint-Länge/-Aussehen**: `joint_focus/ascii_joint.py` (`PAPER_LEN`, `FILTER_LEN`,
+  `TIP_HEIGHT` für die Verjüngung, Rauch in `_smoke`). Die Länge passt sich
+  automatisch an die Terminalbreite an.

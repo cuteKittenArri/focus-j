@@ -13,14 +13,18 @@ einen "freigespielten" Joint, der später eingelöst werden kann.
 import curses
 import sys
 
+from joint_focus.colors import reset_terminal_background, set_terminal_background
 from joint_focus.ui import run
 
 
 def main() -> int:
+    set_terminal_background()
     try:
         curses.wrapper(run)
     except KeyboardInterrupt:
         pass
+    finally:
+        reset_terminal_background()
     return 0
 
 
