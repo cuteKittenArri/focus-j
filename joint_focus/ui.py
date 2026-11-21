@@ -16,9 +16,9 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from . import colors
-from .ascii_joint import JOINT_HEIGHT, dimensions, noise, render_joint
+from .ascii_joint import JOINT_HEIGHT, AshTracker, dimensions, noise, render_joint
 from .bigtext import big_size, render_big
-from .storage import add_joint, load_state, redeem_joint
+from .storage import add_joint, load_state, redeem_joint, set_custom_minutes
 
 A = colors.attr
 
@@ -28,6 +28,9 @@ DURATIONS: Dict[str, Tuple[int, str]] = {
     "60": (60 * 60, "1 Stunde"),
     "120": (120 * 60, "2 Stunden"),
 }
+
+CUSTOM_MIN, CUSTOM_MAX = 1, 360   # erlaubte eigene Fokuszeit in Minuten
+CUSTOM_STEP = 5                   # Schrittweite für ↑/↓
 
 TICK_MS = 250            # Animations-/Eingabe-Takt in Millisekunden
 MIN_W, MIN_H = 44, 16    # darunter wird nur ein Hinweis angezeigt
@@ -115,6 +118,24 @@ def format_minutes(minutes: int) -> str:
     return f"{minutes // 60}h {minutes % 60:02d}m"
 
 
+def duration_label(minutes: int) -> str:
+    """Anzeigename einer Dauer: '45 Minuten', '1 Stunde', '1 Std 30 Min'."""
+    hours, mins = divmod(minutes, 60)
+    if not hours:
+        return "1 Minute" if mins == 1 else f"{mins} Minuten"
+    if not mins:
+        return "1 Stunde" if hours == 1 else f"{hours} Stunden"
+    return f"{hours} Std {mins} Min"
+
+
+def short_duration(minutes: int) -> str:
+    """Kurzform für enge Stellen: '45m', '2h', '1h30'."""
+    hours, mins = divmod(minutes, 60)
+    if not hours:
+        return f"{mins}m"
+    return f"{hours}h" if not mins else f"{hours}h{mins:02d}"
+
+
 # ---------------------------------------------------------------------------
 # Bausteine: Kopf, Fuß, Linien, Pillen, Karten
 # ---------------------------------------------------------------------------
@@ -158,14 +179,19 @@ def draw_header(win, state: Dict) -> None:
 
 def draw_footer(win, hints: Sequence[Tuple[str, str]]) -> None:
     """Tastenhinweise: Taste in Gold, Beschreibung gedimmt."""
-    max_y, _ = win.getmaxyx()
+    max_y, max_x = win.getmaxyx()
     draw_rule(win, max_y - 2)
     runs: List[Run] = []
-    for i, (key, desc) in enumerate(hints):
-        if i:
-            runs.append(("   ·   ", A("sep")))
-        runs.append((key, A("key") | BOLD))
-        runs.append((" " + desc, A("hint")))
+    # bei schmalen Terminals rücken die Hinweise enger zusammen
+    for sep in ("   ·   ", " · ", "  "):
+        runs = []
+        for i, (key, desc) in enumerate(hints):
+            if i:
+                runs.append((sep, A("sep")))
+            runs.append((key, A("key") | BOLD))
+            runs.append((" " + desc, A("hint")))
+        if runs_width(runs) <= max_x - 4:
+            break
     put_runs_center(win, max_y - 1, runs)
 
 
@@ -207,12 +233,16 @@ def draw_big(win, y: int, text: str, style: str, shades: Sequence[str], attr_ext
         put(win, y + i, x, line, A(shade) | attr_extra)
 
 
-def draw_joint(win, top_y: int, progress: float, tick: int,
-               smoke_height: int, lit: bool = True) -> None:
-    """Zeichnet den Joint (JOINT_HEIGHT Zeilen ab top_y) plus Rauch darüber."""
+def draw_joint(win, top_y: int, progress: float, tick: int, smoke_height: int,
+               lit: bool = True, ash: Optional[AshTracker] = None, frame_no: int = 0) -> None:
+    """
+    Zeichnet den Joint (JOINT_HEIGHT Zeilen ab top_y) plus Rauch darüber.
+    Mit ash (+ fortlaufender Frame-Nummer) fällt abbrechende Asche sichtbar herunter.
+    """
     _, max_x = win.getmaxyx()
     paper_len, filter_len = dimensions(max_x)
-    frame = render_joint(progress, tick, paper_len, filter_len, smoke_height, lit)
+    fall = ash.update(progress, paper_len, frame_no) if ash else None
+    frame = render_joint(progress, tick, paper_len, filter_len, smoke_height, lit, fall)
     x0 = center_x(win, frame.width)
 
     for p in frame.smoke:
@@ -321,6 +351,7 @@ def menu_screen(stdscr, state: Dict) -> str:
         MenuItem("30", "30 Minuten", "◔"),
         MenuItem("60", "1 Stunde", "◑"),
         MenuItem("120", "2 Stunden", "●"),
+        MenuItem("custom", "Eigene Zeit", f"✎ {short_duration(_custom_default(state))}"),
     ]
     other = [
         MenuItem("redeem", "Joint einlösen", f"{state['joints']} ✿", state["joints"] > 0),
@@ -351,10 +382,143 @@ def menu_screen(stdscr, state: Dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Eigene Fokuszeit wählen
+# ---------------------------------------------------------------------------
+
+def _clamp_minutes(minutes: int) -> int:
+    return max(CUSTOM_MIN, min(CUSTOM_MAX, minutes))
+
+
+def _custom_default(state: Dict) -> int:
+    try:
+        return _clamp_minutes(int(state.get("custom_minutes", 45)))
+    except (TypeError, ValueError):
+        return 45
+
+
+def draw_slider(win, y: int, minutes: int, width: int) -> None:
+    """Schieberegler 0..CUSTOM_MAX mit Stundenmarken darunter."""
+    x0 = center_x(win, width)
+    pos = round(min(minutes, CUSTOM_MAX) / CUSTOM_MAX * (width - 1))
+    for i in range(width):
+        if i < pos:
+            put(win, y, x0 + i, "━", A("title_spark"))
+        elif i == pos:
+            put(win, y, x0 + i, "●", A("item") | BOLD)
+        else:
+            put(win, y, x0 + i, "─", A("sep"))
+    put(win, y + 1, x0, "0", A("muted"))
+    for hour in range(1, CUSTOM_MAX // 60 + 1):
+        mark = round(hour * 60 / CUSTOM_MAX * (width - 1))
+        label = f"{hour}h"
+        put(win, y + 1, x0 + mark - len(label) + 1, label, A("muted"))
+
+
+def draw_custom(win, minutes: int) -> None:
+    _, max_x = win.getmaxyx()
+    top, avail = content_area(win)
+    valid = CUSTOM_MIN <= minutes <= CUSTOM_MAX
+    text = str(minutes)
+
+    # Überschrift, Abstand, ▲, Ziffern, ▼, Beschriftung, Info  (+ Regler-Block)
+    fixed = 6
+    slider_block = 4                  # Abstand, Regler, Marken, Abstand
+    style, show_slider = "plain", False
+    for candidate in ("large", "small", "plain"):
+        if fixed + big_size(text, candidate)[1] + slider_block <= avail:
+            style, show_slider = candidate, True
+            break
+    digits_h = big_size(text, style)[1]
+    total = fixed + digits_h + (slider_block if show_slider else 0)
+    y = top + max(0, (avail - total) // 2)
+
+    put_runs_center(win, y, [
+        ("✎", A("key")),
+        ("  Eigene Fokuszeit", A("item") | BOLD),
+    ])
+
+    can_up, can_down = minutes < CUSTOM_MAX, minutes > CUSTOM_MIN
+    put_center(win, y + 2, "▲", A("key") if can_up else A("sep"))
+    shades = colors.DIGITS if valid else ["digit_paused"]
+    draw_big(win, y + 3, text, style, shades, BOLD if style == "plain" else 0)
+    put_center(win, y + 3 + digits_h, "▼", A("key") if can_down else A("sep"))
+
+    caption_y = y + 4 + digits_h
+    if not valid:
+        put_center(win, caption_y, f"erlaubt: {CUSTOM_MIN}–{CUSTOM_MAX} Minuten", A("muted"))
+    elif minutes >= 60:
+        put_runs_center(win, caption_y, [
+            ("Minuten", A("muted")),
+            ("  ·  ", A("sep")),
+            (duration_label(minutes), A("item")),
+        ])
+    else:
+        put_center(win, caption_y, "Minute" if minutes == 1 else "Minuten", A("muted"))
+
+    info_y = caption_y + 1
+    if show_slider:
+        # Breite so wählen, dass jede Stunde gleich viele Zellen bekommt
+        hours = CUSTOM_MAX // 60
+        per_hour = max(3, min(6, (max_x - 9) // hours))
+        draw_slider(win, info_y + 1, minutes, per_hour * hours + 1)
+        info_y += slider_block
+    if valid:
+        end = datetime.now() + timedelta(minutes=minutes)
+        put_runs_center(win, info_y, [
+            ("endet um ", A("muted")),
+            (end.strftime("%H:%M"), A("info") | BOLD),
+        ])
+
+
+def custom_time_screen(stdscr, state: Dict) -> Optional[int]:
+    """
+    Lässt eine eigene Fokuszeit wählen: ↑/↓ in 5er-Schritten, ←/→ minutenweise
+    oder direkt eintippen. Gibt die Minuten zurück, None = abgebrochen.
+    """
+    minutes = _custom_default(state)
+    typed = ""           # eingetippte Ziffern; leer = nächste Ziffer beginnt neu
+    stdscr.timeout(1000)  # einmal pro Sekunde neu zeichnen, damit "endet um" stimmt
+
+    while True:
+        stdscr.erase()
+        if not draw_too_small(stdscr):
+            draw_header(stdscr, state)
+            draw_custom(stdscr, minutes)
+            draw_footer(stdscr, [
+                ("↑↓", f"±{CUSTOM_STEP}"), ("←→", "±1"), ("0-9", "tippen"),
+                ("⏎", "starten"), ("esc", "zurück"),
+            ])
+        stdscr.refresh()
+
+        key = stdscr.getch()
+        base = _clamp_minutes(minutes)
+        if key in (curses.KEY_UP, ord('k'), ord('+')):
+            minutes, typed = _clamp_minutes((base // CUSTOM_STEP + 1) * CUSTOM_STEP), ""
+        elif key in (curses.KEY_DOWN, ord('j'), ord('-')):
+            minutes, typed = _clamp_minutes((base - 1) // CUSTOM_STEP * CUSTOM_STEP), ""
+        elif key in (curses.KEY_RIGHT, ord('l')):
+            minutes, typed = _clamp_minutes(base + 1), ""
+        elif key in (curses.KEY_LEFT, ord('h')):
+            minutes, typed = _clamp_minutes(base - 1), ""
+        elif ord('0') <= key <= ord('9'):
+            typed = (typed + chr(key))[-3:]
+            minutes = int(typed)
+        elif key in (curses.KEY_BACKSPACE, 127, 8):
+            typed = typed[:-1] if typed else str(minutes)[:-1]
+            minutes = int(typed) if typed else 0
+        elif key in (curses.KEY_ENTER, ord('\n'), ord('\r')):
+            if CUSTOM_MIN <= minutes <= CUSTOM_MAX:
+                return minutes
+        elif key in (27, ord('q'), ord('Q')):
+            return None
+
+
+# ---------------------------------------------------------------------------
 # Fokus-Session
 # ---------------------------------------------------------------------------
 
-def draw_timer(win, label: str, duration: int, elapsed: float, paused: bool, tick: int) -> None:
+def draw_timer(win, label: str, duration: int, elapsed: float, paused: bool, tick: int,
+               ash: Optional[AshTracker] = None, frame_no: int = 0) -> None:
     _, max_x = win.getmaxyx()
     top, avail = content_area(win)
 
@@ -408,7 +572,7 @@ def draw_timer(win, label: str, duration: int, elapsed: float, paused: bool, tic
 
     # Joint + Rauch
     joint_y = info_y + 1 + gap + smoke_h
-    draw_joint(win, joint_y, progress, tick, smoke_h, lit=not paused)
+    draw_joint(win, joint_y, progress, tick, smoke_h, lit=not paused, ash=ash, frame_no=frame_no)
 
     percent = int(min(100, progress * 100))
     put_runs_center(win, joint_y + JOINT_HEIGHT + gap, [
@@ -432,7 +596,9 @@ def timer_screen(stdscr, state: Dict, duration_seconds: int, label: str) -> bool
     paused = False
     pause_started_at: Optional[float] = None
     paused_total = 0.0
-    tick = 0
+    tick = 0              # treibt Glut & Rauch an, steht während der Pause still
+    frame_no = 0          # läuft immer weiter (für fallende Asche)
+    ash = AshTracker()
 
     while True:
         now = time.monotonic()
@@ -445,7 +611,7 @@ def timer_screen(stdscr, state: Dict, duration_seconds: int, label: str) -> bool
         stdscr.erase()
         if not draw_too_small(stdscr, f"Timer läuft weiter: {format_time(int(math.ceil(max(0, remaining))))}"):
             draw_header(stdscr, state)
-            draw_timer(stdscr, label, duration_seconds, elapsed_active, paused, tick)
+            draw_timer(stdscr, label, duration_seconds, elapsed_active, paused, tick, ash, frame_no)
             hints = [("p", "weiter" if paused else "Pause"), ("q", "abbrechen (kein Joint)")]
             draw_footer(stdscr, hints)
         stdscr.refresh()
@@ -454,6 +620,7 @@ def timer_screen(stdscr, state: Dict, duration_seconds: int, label: str) -> bool
             return True
 
         key = stdscr.getch()
+        frame_no += 1
         if not paused:
             tick += 1
 
@@ -583,6 +750,8 @@ def run(stdscr) -> None:
         pass
     colors.init_colors(stdscr)
     stdscr.keypad(True)
+    if hasattr(curses, "set_escdelay"):
+        curses.set_escdelay(25)  # Esc sofort erkennen statt nach 1 Sekunde
 
     state = load_state()
 
@@ -593,8 +762,15 @@ def run(stdscr) -> None:
             break
         elif action == "redeem":
             redeem_screen(stdscr, state)
-        elif action in DURATIONS:
-            seconds, label = DURATIONS[action]
+        elif action in DURATIONS or action == "custom":
+            if action == "custom":
+                minutes = custom_time_screen(stdscr, state)
+                if minutes is None:
+                    continue
+                set_custom_minutes(state, minutes)
+                seconds, label = minutes * 60, duration_label(minutes)
+            else:
+                seconds, label = DURATIONS[action]
             completed = timer_screen(stdscr, state, seconds, label)
             if completed:
                 add_joint(state, seconds // 60)

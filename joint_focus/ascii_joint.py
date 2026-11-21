@@ -23,13 +23,23 @@ in der obersten Zeile, die zwei Körperzeilen sind wie ein Zylinder schattiert
     Zeile 1  Körper oben (Glanz)
     Zeile 2  Körper unten
     Zeile 3  Schattenkante
-    Zeile 4  herabfallende Ascheflocken
+    Zeile 4  herabfallende Ascheflocken / Aschehäufchen am Boden
 
 Darüber steigt animierter Rauch aus der Glut auf (eigene Liste, Zeilen < 0).
 
-Je größer der Fortschritt (0.0 -> 1.0), desto mehr Asche - die Glut "wandert"
-von links Richtung Filter. Die Gesamtbreite bleibt dabei IMMER konstant,
-damit die Röhre nicht "springt".
+Je größer der Fortschritt (0.0 -> 1.0), desto weiter "wandert" die Glut von
+links Richtung Filter. Die Asche hängt nicht ewig dran: Nach 5-9 Spalten
+bricht sie ab (ein kurzer Stummel bleibt an der Glut), fällt herunter und
+landet als Häufchen am Boden - der Joint wird also sichtbar kürzer.
+
+    vorher:   ▓▓▓▓▓▓▓●██████████████▒▒▒▒
+    nachher:         ▐▓●██████████████▒▒▒▒
+              ▁▂▁▂▃▂▁
+
+Wann die Asche abbricht, folgt deterministisch aus dem Fortschritt. Nur die
+kurze Fall-Animation braucht einen Zeitpunkt - den merkt sich AshTracker.
+Die Gesamtbreite bleibt IMMER konstant (der Filter steht fest), damit die
+Röhre nicht "springt".
 """
 
 import math
@@ -46,6 +56,15 @@ FULL = "█"
 SHADOW = "▀"
 
 JOINT_HEIGHT = 5        # Oberkante, Körper oben, Körper unten, Schatten, Flocken
+
+ASH_BREAK_MIN = 5       # Asche bricht ab, sobald sie so viele Spalten lang ist ...
+ASH_BREAK_MAX = 9       # ... spätestens bei dieser Länge
+HEAP_BLOCKS = "▁▁▂▂▃"   # Aschehäufchen am Boden (Achtel-Blöcke)
+FALL_GRAVITY = 0.7      # Fallweg in Halbzeilen = FALL_GRAVITY * Frame²
+FALL_TILT = 1.6         # die lose Spitze kippt zuerst ab (in Halbzeilen)
+FALL_FLOOR = 4          # Fallweg bis zum Boden (Körper liegt dann in Zeile 3-4)
+LAND_FRAME = 3          # ab hier liegt das ganze Stück am Boden
+FALL_FRAMES = 7         # Gesamtdauer der Fall-Animation inkl. Aufprall
 
 Cell = Tuple[str, str]  # (Zeichen, Farbrolle) - leere Rolle = nichts zeichnen
 EMPTY: Cell = (" ", "")
@@ -67,6 +86,14 @@ class JointFrame:
     cherry_col: Optional[int]
     burnt_len: int
     finished: bool
+
+
+@dataclass
+class AshFall:
+    """Ein gerade abgebrochenes Aschestück, das noch fällt."""
+    start: int  # erste Spalte des Stücks
+    end: int    # erste Spalte dahinter (exklusiv)
+    age: int    # Frames seit dem Abbrechen
 
 
 @dataclass
@@ -102,6 +129,62 @@ def top_height(col: int, paper_len: int) -> int:
     if col >= paper_len:
         return 0
     return int(round(TIP_HEIGHT * (1 - col / paper_len)))
+
+
+def burnt_columns(progress: float, paper_len: int) -> int:
+    """Anzahl bereits verbrannter Papierspalten für einen Fortschritt 0..1."""
+    progress = clamp(progress, 0.0, 1.0)
+    return int(clamp(math.floor(progress * paper_len + 1e-9), 0, paper_len))
+
+
+def ash_attached_from(burnt: int) -> int:
+    """
+    Erste Aschespalte, die noch am Joint hängt - alles links davon ist schon
+    abgefallen. Die Asche wächst bis zu einer (pseudo-zufälligen) Länge von
+    ASH_BREAK_MIN..ASH_BREAK_MAX Spalten, dann bricht sie ab und lässt einen
+    Stummel von 1-2 Spalten an der Glut zurück.
+    """
+    start, k = 0, 0
+    span = ASH_BREAK_MAX - ASH_BREAK_MIN + 1
+    while True:
+        length = ASH_BREAK_MIN + int(noise(k, 41) * span)
+        if burnt < start + length:
+            return start
+        stub = 1 if noise(k, 43) < 0.7 else 2
+        start += length - stub
+        k += 1
+
+
+class AshTracker:
+    """
+    Merkt sich, wann zuletzt ein Stück Asche abgebrochen ist, damit es ein
+    paar Frames lang sichtbar herunterfallen kann. Einmal pro Session anlegen
+    und jeden Frame update() aufrufen.
+    """
+
+    def __init__(self) -> None:
+        self._paper_len: Optional[int] = None
+        self._attached = 0
+        self._fall: Optional[Tuple[int, int, int]] = None  # (start, end, Frame des Abbruchs)
+
+    def update(self, progress: float, paper_len: int, frame: int) -> Optional[AshFall]:
+        attached = ash_attached_from(burnt_columns(progress, paper_len))
+        if paper_len != self._paper_len:
+            # erster Frame oder Terminalgröße geändert: nichts animieren
+            self._paper_len, self._attached, self._fall = paper_len, attached, None
+        elif attached > self._attached:
+            self._fall = (self._attached, attached, frame)
+            self._attached = attached
+        elif attached < self._attached:
+            self._attached, self._fall = attached, None
+
+        if self._fall is not None:
+            start, end, since = self._fall
+            age = frame - since
+            if age < FALL_FRAMES:
+                return AshFall(start, end, age)
+            self._fall = None
+        return None
 
 
 def _column_style(kind: str, col: int, burnt: int, tick: int, lit: bool) -> _ColumnStyle:
@@ -172,26 +255,89 @@ def _smoke(origin_row: int, origin_col: int, tick: int, height: int) -> List[Smo
     return particles
 
 
+def _heap_cell(col: int) -> Cell:
+    """Ein Stück vom Aschehäufchen am Boden (Zeile 4)."""
+    char = HEAP_BLOCKS[int(noise(col, 19) * len(HEAP_BLOCKS))]
+    return char, "ash_lo_1" if noise(col, 23) < 0.6 else "ash_lo_2"
+
+
+def _put_if_empty(rows: List[List[Cell]], row: int, col: int, cell: Cell) -> None:
+    if 0 <= col < len(rows[row]) and not rows[row][col][1]:
+        rows[row][col] = cell
+
+
+def _draw_fall(rows: List[List[Cell]], fall: AshFall, paper_len: int, burnt: int, tick: int) -> None:
+    """
+    Zeichnet ein abgebrochenes Aschestück im freien Fall: es kippt an der
+    losen Spitze zuerst ab, fällt beschleunigt in Halbzeilen-Schritten,
+    wird beim Aufprall platt gedrückt und zerbröselt dann zum Häufchen.
+    """
+    span = max(1, fall.end - fall.start)
+    a = fall.age
+    for col in range(fall.start, fall.end):
+        bucket = 1 if noise(col, 5) < 0.6 else 2
+        hi, lo = f"ash_hi_{bucket}", f"ash_lo_{bucket}"
+
+        if a == 0:
+            # hängt noch einen Moment an Ort und Stelle
+            style = _column_style("ash", col, burnt, tick, lit=False)
+            h = top_height(col, paper_len)
+            if h > 0:
+                rows[0][col] = (LOWER_BLOCKS[h], style.top)
+            rows[1][col] = (FULL, style.hi)
+            rows[2][col] = (FULL, style.lo)
+            rows[3][col] = (SHADOW, style.shadow)
+        elif a <= LAND_FRAME:
+            # im Fall: Körper (4 Halbzeilen hoch) rutscht nach unten, Spitze voraus
+            tip = (fall.end - col) / span
+            drop = FALL_GRAVITY * a * a + FALL_TILT * tip * min(a, 2)
+            top = 2 + min(FALL_FLOOR, int(round(drop)))
+            bottom = top + 4
+            for r in range(JOINT_HEIGHT):
+                upper = top <= 2 * r < bottom
+                lower = top <= 2 * r + 1 < bottom
+                if upper or lower:
+                    char = FULL if upper and lower else ("▀" if upper else "▄")
+                    rows[r][col] = (char, lo if 2 * r + 2 >= bottom else hi)
+        elif a == LAND_FRAME + 1:
+            rows[4][col] = ("▆" if noise(col, 29) < 0.6 else "▅", lo)   # Aufprall
+        elif a == LAND_FRAME + 2:
+            rows[4][col] = ("▄" if noise(col, 31) < 0.6 else "▃", lo)
+        else:
+            rows[4][col] = _heap_cell(col)
+
+    # beim Aufprall spritzen ein paar Brösel zur Seite
+    if a in (LAND_FRAME + 1, LAND_FRAME + 2):
+        spread = a - LAND_FRAME
+        _put_if_empty(rows, 4, fall.start - spread, ("·", "flake"))
+        _put_if_empty(rows, 3, fall.start - spread - 1, ("˙", "flake"))
+        _put_if_empty(rows, 3, fall.end - 1 + spread, ("·", "flake"))
+
+
 def render_joint(progress: float, tick: int,
                  paper_len: int = PAPER_LEN, filter_len: int = FILTER_LEN,
-                 smoke_height: int = 4, lit: bool = True) -> JointFrame:
+                 smoke_height: int = 4, lit: bool = True,
+                 fall: Optional[AshFall] = None) -> JointFrame:
     """
     Berechnet einen einzelnen Animationsframe für den gegebenen Fortschritt (0..1).
 
     lit=False zeigt eine gedimmte Glut ohne Rauch (z.B. während einer Pause).
+    fall (von AshTracker.update) lässt ein gerade abgebrochenes Aschestück fallen.
     """
-    progress = clamp(progress, 0.0, 1.0)
     width = paper_len + filter_len
-
-    burnt = int(clamp(math.floor(progress * paper_len + 1e-9), 0, paper_len))
+    burnt = burnt_columns(progress, paper_len)
     finished = burnt >= paper_len
     cherry = None if finished else burnt
+    attached = ash_attached_from(burnt)
+    falling = range(fall.start, fall.end) if fall else range(0)
 
     rows: List[List[Cell]] = [[EMPTY] * width for _ in range(JOINT_HEIGHT)]
 
     for col in range(width):
         if col >= paper_len:
             kind = "filter"
+        elif col < attached:
+            kind = "gone"            # Asche schon abgefallen
         elif col < burnt:
             kind = "ash"
         elif col == cherry:
@@ -201,7 +347,18 @@ def render_joint(progress: float, tick: int,
         else:
             kind = "paper"
 
+        if kind == "gone":
+            if col not in falling:
+                rows[4][col] = _heap_cell(col)
+            continue
+
         style = _column_style(kind, col, burnt, tick, lit)
+        if kind == "ash" and col == attached and attached > 0:
+            # Bruchkante nach dem Abbrechen: ausgefranst, ohne Oberkante
+            style.top = ""
+            style.hi_char = "▐"
+            style.lo_char = "▐" if noise(col, 13) < 0.5 else FULL
+
         h = top_height(col, paper_len)
         if h > 0 and style.top:
             rows[0][col] = (LOWER_BLOCKS[h], style.top)
@@ -212,6 +369,9 @@ def render_joint(progress: float, tick: int,
         # herabrieselnde Ascheflocken unter dem verbrannten Teil
         if kind == "ash" and noise(col, tick // 3) < 0.08:
             rows[4][col] = ("·" if noise(col, 11) < 0.6 else ".", "flake")
+
+    if fall is not None:
+        _draw_fall(rows, fall, paper_len, burnt, tick)
 
     smoke: List[SmokeParticle] = []
     if lit and cherry is not None:

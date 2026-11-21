@@ -19,6 +19,7 @@ DEFAULT_STATE: Dict[str, Any] = {
     "sessions_completed": 0,    # Anzahl komplett durchgelaufener Fokus-Sessions
     "minutes_focused": 0,       # Summe aller fokussierten Minuten
     "joints_redeemed": 0,       # Anzahl bereits eingelöster Joints
+    "custom_minutes": 45,       # zuletzt gewählte eigene Fokuszeit
 }
 
 
@@ -61,3 +62,10 @@ def redeem_joint(state: Dict[str, Any]) -> bool:
         save_state(state)
         return True
     return False
+
+
+def set_custom_minutes(state: Dict[str, Any], minutes: int) -> None:
+    """Merkt sich die zuletzt gewählte eigene Fokuszeit."""
+    if state.get("custom_minutes") != minutes:
+        state["custom_minutes"] = minutes
+        save_state(state)

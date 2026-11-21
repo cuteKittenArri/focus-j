@@ -51,6 +51,13 @@ joint-focus
 - `Enter`: Auswahl bestätigen
 - `q`: beenden
 
+**Eigene Zeit** (Menüpunkt „Eigene Zeit“)
+- `↑`/`↓` oder `k`/`j`: ±5 Minuten
+- `←`/`→` oder `h`/`l`: ±1 Minute
+- `0`–`9`: Minuten direkt eintippen, `Backspace` löscht
+- `Enter`: Session starten, `Esc`/`q`: zurück zum Menü
+- Erlaubt sind 1–360 Minuten; die zuletzt gewählte Zeit wird gespeichert.
+
 **Während der Fokuszeit**
 - `p`: Pause / Weiter
 - `q`: Session abbrechen (kein Joint wird vergeben)
@@ -62,6 +69,9 @@ joint-focus
 
 - Die Glut wandert von links (frisch) nach rechts (Filter) - je mehr Zeit vergeht,
   desto mehr ist verbrannt.
+- Die Asche bricht nach 5-9 Spalten ab, fällt herunter und landet als Häufchen
+  am Boden - der Joint wird also sichtbar kürzer (einstellbar über
+  `ASH_BREAK_MIN`/`ASH_BREAK_MAX` in `joint_focus/ascii_joint.py`).
 - Während einer Pause glimmt die Glut nur noch dunkel und der Rauch hört auf.
 - Asche und Rauch sind rein optisch, haben aber keinen Einfluss auf die Zeitmessung.
 - Bei Erreichen des Filters ist die Session komplett durchgelaufen → **+1 Joint**.
@@ -97,6 +107,8 @@ joint-focus/
 
 - **Neue Zeitlängen**: `DURATIONS`-Dict in `joint_focus/ui.py` erweitern
   (Format: `"key": (sekunden, "Anzeigename")`).
+- **Grenzen für die eigene Zeit**: `CUSTOM_MIN`, `CUSTOM_MAX` und `CUSTOM_STEP`
+  in `joint_focus/ui.py`.
 - **Farben ändern**: `joint_focus/colors.py` - die Palette besteht aus vier Hex-Farben
   ([colorhunt](https://colorhunt.co/palette/2900445000718a2a78eee3b0)), alle anderen Töne
   werden daraus gemischt. Vier Konstanten tauschen = neue Palette. Die benannten Rollen
