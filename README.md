@@ -4,6 +4,11 @@ A terminal focus timer for Linux/zsh. Instead of a boring progress bar, a joint 
 burns down while you focus. Every **fully completed** session earns you a joint, which
 you collect in the top-right corner and can redeem later.
 
+<p align="center">
+  <img src="https://arri-eta.vercel.app/focus-j-menu.png" alt="Main menu with focus durations and stats" width="49%">
+  <img src="https://arri-eta.vercel.app/focus-j-timer.png" alt="Running focus session with the burning joint" width="49%">
+</p>
+
 ## Requirements
 
 - Python 3.8+ (standard library only, including `curses`; no pip packages)
