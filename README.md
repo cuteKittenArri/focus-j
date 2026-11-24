@@ -1,118 +1,64 @@
 # 🌿 Joint Focus
 
-Ein Terminal-Fokus-Timer für Linux/zsh. Statt eines langweiligen Fortschrittsbalkens
-brennt während deiner Fokuszeit ein Joint langsam ab. Für jede **komplett** durchgehaltene
-Session wird ein Joint "freigespielt" - diese sammelst du oben rechts und kannst sie
-später einlösen.
+A terminal focus timer for Linux/zsh. Instead of a boring progress bar, a joint slowly
+burns down while you focus. Every **fully completed** session earns you a joint, which
+you collect in the top-right corner and can redeem later.
 
-## Voraussetzungen
+## Requirements
 
-- Python 3.8+
-- `curses` (ist bei Linux/macOS Standard in Python enthalten, keine Installation nötig)
-- Ein Terminal mit 256-Farben-Unterstützung (praktisch jedes moderne Terminal,
-  z.B. Standard-zsh-Terminal, iTerm, Alacritty, Kitty ...). Kann das Terminal Farben
-  umdefinieren (z.B. Kitty, xterm), erscheint die Palette exakt, sonst als nächstliegende
-  256er-Farben. Ohne 256 Farben fällt die App automatisch auf Standardfarben zurück.
+- Python 3.8+ (standard library only, including `curses`; no pip packages)
+- A 256-color terminal. Terminals that can redefine colors (Kitty, xterm, …) show the
+  exact palette; others use the closest 256 colors, and 8-color terminals fall back to
+  basic colors.
 
-Keine externen pip-Pakete nötig - reine Python-Standardbibliothek.
-
-## Start
+## Running
 
 ```bash
-cd joint-focus
 python3 main.py
 ```
 
-Oder ausführbar machen und direkt starten:
+To make it available everywhere:
 
 ```bash
 chmod +x main.py
-./main.py
-```
-
-### Optional: global verfügbar machen
-
-```bash
-mkdir -p ~/.local/bin
-ln -s "$(pwd)/main.py" ~/.local/bin/joint-focus
-# ~/.local/bin muss in deinem PATH sein (meist schon der Fall)
-```
-
-Danach einfach von überall:
-
-```bash
+ln -s "$(pwd)/main.py" ~/.local/bin/joint-focus   # ~/.local/bin must be in your PATH
 joint-focus
 ```
 
-## Bedienung
+## Controls
 
-**Hauptmenü**
-- `↑`/`↓` oder `j`/`k`: navigieren
-- `Enter`: Auswahl bestätigen
-- `q`: beenden
+| Screen       | Keys                                                                 |
+|--------------|----------------------------------------------------------------------|
+| Main menu    | `↑`/`↓` or `j`/`k` navigate · `Enter` select · `q` quit              |
+| Custom time  | `↑`/`↓` ±5 min · `←`/`→` or `h`/`l` ±1 min · `0`–`9` type minutes · `Backspace` delete · `Enter` start · `Esc`/`q` back |
+| Focus session| `p` pause/resume · `q` abort (no joint awarded)                      |
+| Session done | any key returns to the menu                                          |
 
-**Eigene Zeit** (Menüpunkt „Eigene Zeit“)
-- `↑`/`↓` oder `k`/`j`: ±5 Minuten
-- `←`/`→` oder `h`/`l`: ±1 Minute
-- `0`–`9`: Minuten direkt eintippen, `Backspace` löscht
-- `Enter`: Session starten, `Esc`/`q`: zurück zum Menü
-- Erlaubt sind 1–360 Minuten; die zuletzt gewählte Zeit wird gespeichert.
+Custom time allows 1–360 minutes and remembers your last choice.
 
-**Während der Fokuszeit**
-- `p`: Pause / Weiter
-- `q`: Session abbrechen (kein Joint wird vergeben)
+## Saved data
 
-**Nach abgeschlossener Session**
-- Beliebige Taste: zurück zum Menü
+Your joint stash and stats (completed sessions, focused minutes, redeemed joints) persist in
+`~/.local/share/joint-focus/state.json` (or `$XDG_DATA_HOME/joint-focus/state.json`).
 
-## Wie der Joint funktioniert
-
-- Die Glut wandert von links (frisch) nach rechts (Filter) - je mehr Zeit vergeht,
-  desto mehr ist verbrannt.
-- Die Asche bricht nach 5-9 Spalten ab, fällt herunter und landet als Häufchen
-  am Boden - der Joint wird also sichtbar kürzer (einstellbar über
-  `ASH_BREAK_MIN`/`ASH_BREAK_MAX` in `joint_focus/ascii_joint.py`).
-- Während einer Pause glimmt die Glut nur noch dunkel und der Rauch hört auf.
-- Asche und Rauch sind rein optisch, haben aber keinen Einfluss auf die Zeitmessung.
-- Bei Erreichen des Filters ist die Session komplett durchgelaufen → **+1 Joint**.
-
-## Speicherung
-
-Dein Joint-Vorrat und deine Statistiken (abgeschlossene Sessions, fokussierte Minuten,
-eingelöste Joints) werden dauerhaft gespeichert unter:
+## Project structure
 
 ```
-~/.local/share/joint-focus/state.json
+main.py                 # entry point
+joint_focus/
+├── colors.py           # color roles (curses)
+├── ascii_joint.py      # joint, ash and smoke rendering
+├── bigtext.py          # large block digits for the timer
+├── storage.py          # JSON persistence
+└── ui.py               # curses UI: menu, timer, redeeming
 ```
 
-(oder unter `$XDG_DATA_HOME/joint-focus/state.json`, falls gesetzt). Die Datei bleibt
-über Neustarts der App erhalten - kein Datenverlust beim Beenden.
+## Customizing
 
-## Projektstruktur
-
-```
-joint-focus/
-├── main.py                  # Einstiegspunkt
-├── README.md
-└── joint_focus/
-    ├── __init__.py
-    ├── colors.py             # Farbrollen: Night / Violet / Plum / Cream (curses)
-    ├── ascii_joint.py        # Reine Rendering-Logik für Joint + Rauch
-    ├── bigtext.py            # Große Block-Ziffern für den Timer
-    ├── storage.py            # Persistenz (JSON-Datei) für den Joint-Counter
-    └── ui.py                 # Curses-Vollbild-UI: Menü, Timer, Einlösen
-```
-
-## Anpassen
-
-- **Neue Zeitlängen**: `DURATIONS`-Dict in `joint_focus/ui.py` erweitern
-  (Format: `"key": (sekunden, "Anzeigename")`).
-- **Grenzen für die eigene Zeit**: `CUSTOM_MIN`, `CUSTOM_MAX` und `CUSTOM_STEP`
-  in `joint_focus/ui.py`.
-- **Farben ändern**: `joint_focus/colors.py` - die Palette besteht aus vier Hex-Farben
-  ([colorhunt](https://colorhunt.co/palette/2900445000718a2a78eee3b0)), alle anderen Töne
-  werden daraus gemischt. Vier Konstanten tauschen = neue Palette. Die benannten Rollen
-  (und Fallback-Farben für 8-Farben-Terminals) liegen ebenfalls dort.
-- **Joint-Länge/-Aussehen**: `joint_focus/ascii_joint.py` (`PAPER_LEN`, `FILTER_LEN`,
-  `TIP_HEIGHT` für die Verjüngung, Rauch in `_smoke`). Die Länge passt sich
-  automatisch an die Terminalbreite an.
+- **Durations**: `DURATIONS` in `joint_focus/ui.py` (`"key": (seconds, "Label")`).
+  Custom-time limits: `CUSTOM_MIN`, `CUSTOM_MAX`, `CUSTOM_STEP`.
+- **Colors**: `joint_focus/colors.py`. The palette is four hex colors
+  ([colorhunt](https://colorhunt.co/palette/2900445000718a2a78eee3b0)); every other shade is
+  mixed from them, so swapping those four constants gives you a new palette.
+- **Joint look**: `joint_focus/ascii_joint.py` — `PAPER_LEN`, `FILTER_LEN`, `TIP_HEIGHT`,
+  `ASH_BREAK_MIN`/`ASH_BREAK_MAX`, smoke in `_smoke`. The length adapts to terminal width.
